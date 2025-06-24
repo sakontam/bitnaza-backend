@@ -1,0 +1,6 @@
+Flask
+flask-cors
+requests
+mysql-connector-python
+flask_socketio
+
