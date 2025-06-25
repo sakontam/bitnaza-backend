@@ -4,17 +4,24 @@ from flask import Blueprint, jsonify, request
 from datetime import datetime, timedelta
 import requests
 import time
-from extensions import socketio  # นำเข้า socketio จาก extensions.py
+from extensions import socketio
 from dotenv import load_dotenv
+
+# โหลดตัวแปรจาก .env
+load_dotenv()
 
 # สร้าง Blueprint สำหรับ Bitcoin
 bitcoin_bp = Blueprint("bitcoin", __name__)
-load_dotenv()
-# ฟังก์ชันสำหรับกำหนด socketio (หากต้องการเพิ่ม)
+
+# กำหนด path ของ database แบบ absolute
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(THIS_DIR) 
+DB_PATH = os.path.join(BASE_DIR, "bitnaza_data.db")
+
+# ฟังก์ชันสำหรับกำหนด socketio
 def set_socketio(sio):
     global socketio
     socketio = sio
-
 
 # ฟังก์ชันดึงข้อมูลจาก Bitcoin API
 def fetch_bitcoin_data():
@@ -34,9 +41,7 @@ def fetch_bitcoin_data():
         if response.status_code == 200 and data["Response"] == "Success":
             return [
                 {
-                    "timestamp": datetime.fromtimestamp(item["time"]).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    "timestamp": datetime.fromtimestamp(item["time"]).strftime("%Y-%m-%d %H:%M:%S"),
                     "price": item["close"],
                     "high_24h": item["high"],
                     "low_24h": item["low"],
@@ -46,33 +51,27 @@ def fetch_bitcoin_data():
                 for item in data["Data"]["Data"]
             ]
         else:
-            print(
-                f"Failed to fetch Bitcoin data: {data.get('Message', 'Unknown error')}"
-            )
+            print(f"Failed to fetch Bitcoin data: {data.get('Message', 'Unknown error')}")
             return None
     except requests.RequestException as e:
         print(f"Error fetching Bitcoin data: {e}")
         return None
 
-
 # ฟังก์ชันบันทึกข้อมูลลงในฐานข้อมูล SQLite
 def save_to_database_and_emit_bitcoin(minute_data):
-    with sqlite3.connect("bitnaza_data.db") as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         for entry in minute_data:
             cursor.execute(
-                """
-                SELECT COUNT(*) FROM bitcoin_prices WHERE timestamp = ?
-            """,
+                "SELECT COUNT(*) FROM bitcoin_prices WHERE timestamp = ?",
                 (entry["timestamp"],),
             )
             if cursor.fetchone()[0] == 0:
-                # บันทึกข้อมูลทั้งหมดลงในฐานข้อมูล
                 cursor.execute(
                     """
                     INSERT INTO bitcoin_prices (timestamp, price, high_24h, low_24h, volume_24h, market_cap)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                    """,
                     (
                         entry["timestamp"],
                         entry["price"],
@@ -82,7 +81,6 @@ def save_to_database_and_emit_bitcoin(minute_data):
                         entry["market_cap"],
                     ),
                 )
-                # ส่งข้อมูลผ่าน WebSocket
                 socketio.emit(
                     "new_data",
                     {
@@ -99,8 +97,7 @@ def save_to_database_and_emit_bitcoin(minute_data):
         conn.commit()
         print("Bitcoin data saved to database.")
 
-
-# ฟังก์ชัน API สำหรับดึงข้อมูลจากฐานข้อมูล
+# API ดึงข้อมูลจากฐานข้อมูล
 @bitcoin_bp.route("/api/bitcoin", methods=["GET"])
 def get_bitcoin_data():
     interval = request.args.get("interval", "15m")
@@ -118,7 +115,7 @@ def get_bitcoin_data():
     if interval_minutes is None:
         return jsonify({"error": "Invalid interval"}), 400
 
-    with sqlite3.connect("bitnaza_data.db") as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
 
         query_prices = f"""
@@ -141,9 +138,9 @@ def get_bitcoin_data():
 
         data = {
             "prices": [{"timestamp": row[0], "price": row[1]} for row in rows],
-            "high_24h": stats[0] if stats and stats[0] is not None else 0.0,
-            "low_24h": stats[1] if stats and stats[1] is not None else 0.0,
-            "latest_price": stats[2] if stats and stats[2] is not None else 0.0,
+            "high_24h": stats[0] if stats else 0.0,
+            "low_24h": stats[1] if stats else 0.0,
+            "latest_price": stats[2] if stats else 0.0,
         }
     return jsonify(data)
 
@@ -158,7 +155,7 @@ def fetch_bitcoin_real_time():
             print("Bitcoin data fetch cycle completed.")
         except Exception as e:
             print(f"Error during Bitcoin data fetch cycle: {e}")
-        # คำนวณเวลาที่เหลือจนถึง 10 นาทีถัดไป (เช่น 23:10, 23:20, ...)
+
         now = datetime.now()
         minutes_to_next_10 = 10 - (now.minute % 10)
         if minutes_to_next_10 == 0:

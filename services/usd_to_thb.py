@@ -5,12 +5,17 @@ from dotenv import load_dotenv
 from flask_socketio import emit
 import requests
 from flask import Blueprint, jsonify, request
-from datetime import datetime
-from extensions import socketio  # ใช้ socketio จาก extensions.py
+from datetime import datetime, timedelta
+from extensions import socketio
 
-usd_to_thb_bp = Blueprint("usd_to_thb", __name__)  # นิยาม Blueprint
+usd_to_thb_bp = Blueprint("usd_to_thb", __name__)
 load_dotenv()
-# ฟังก์ชันสำหรับกำหนด socketio (หากต้องการเพิ่ม)
+
+# 🟩 ใช้ absolute path เพื่อชี้ไปยังไฟล์ .db ข้าง ๆ ไฟล์นี้
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(THIS_DIR) 
+DB_PATH = os.path.join(BASE_DIR, "bitnaza_data.db")
+
 def set_socketio(sio):
     global socketio
     socketio = sio
@@ -33,9 +38,7 @@ def fetch_usd_to_thb_data():
         if data["Response"] == "Success":
             return [
                 {
-                    "timestamp": datetime.fromtimestamp(item["time"]).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    "timestamp": datetime.fromtimestamp(item["time"]).strftime("%Y-%m-%d %H:%M:%S"),
                     "price": item["close"],
                     "high_24h": item["high"],
                     "low_24h": item["low"],
@@ -49,9 +52,8 @@ def fetch_usd_to_thb_data():
         print(f"Error fetching USD/THB data: {e}")
         return None
 
-
 def save_to_database_and_emit_usd_to_thb(data):
-    with sqlite3.connect("bitnaza_data.db") as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         for entry in data:
             cursor.execute(
@@ -107,7 +109,7 @@ def get_usd_to_thb_data():
     if interval_minutes is None:
         return jsonify({"error": "Invalid interval"}), 400
 
-    with sqlite3.connect("bitnaza_data.db") as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
 
         query_prices = f"""
@@ -130,14 +132,13 @@ def get_usd_to_thb_data():
 
         data = {
             "prices": [{"timestamp": row[0], "price": row[1]} for row in rows],
-            "high_24h": stats[0] if stats and stats[0] is not None else 0.0,
-            "low_24h": stats[1] if stats and stats[1] is not None else 0.0,
-            "latest_price": stats[2] if stats and stats[2] is not None else 0.0,
+            "high_24h": stats[0] if stats else 0.0,
+            "low_24h": stats[1] if stats else 0.0,
+            "latest_price": stats[2] if stats else 0.0,
         }
     return jsonify(data)
 
 def fetch_usd_to_thb_real_time():
-    from datetime import datetime, timedelta
     while True:
         try:
             print("Starting USD/THB data fetch cycle...")
@@ -147,7 +148,7 @@ def fetch_usd_to_thb_real_time():
             print("USD/THB data fetch cycle completed.")
         except Exception as e:
             print(f"Error during USD/THB data fetch cycle: {e}")
-        # คำนวณเวลาที่เหลือจนถึง 10 นาทีถัดไป (เช่น 23:10, 23:20, ...)
+
         now = datetime.now()
         minutes_to_next_10 = 10 - (now.minute % 10)
         if minutes_to_next_10 == 0:
