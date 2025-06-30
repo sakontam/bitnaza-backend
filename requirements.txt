@@ -4,3 +4,4 @@ requests
 mysql-connector-python
 flask_socketio
 dotenv
+jwt
